@@ -103,21 +103,29 @@ await db.exec(`
   values ('${OWNER}', 'owner', 'Owner', 100000),
          ('${TRUSTED}', 'trusted', 'Trusted', 25000);
 
-  insert into instruments (symbol, venue, asset_class, in_universe, primary_source, data_quality)
-  values ('BTCUSDT', 'binance', 'crypto', true, 'binance_ws', 'official');
-
-  -- The owner's private journal entry. The trusted user must never see it.
+  -- The seed migration already loaded the universe. Pick one instrument from
+  -- it rather than inserting our own, so the test does not depend on whether
+  -- the seed has run.
   insert into journal (user_id, instrument_id, action, note)
-  select '${OWNER}', id, 'took', 'Owner private note' from instruments limit 1;
+  select '${OWNER}', id, 'took', 'Owner private note'
+  from instruments where symbol = 'BTCUSDT';
 
   insert into journal (user_id, instrument_id, action, note)
-  select '${TRUSTED}', id, 'took', 'Trusted own note' from instruments limit 1;
+  select '${TRUSTED}', id, 'took', 'Trusted own note'
+  from instruments where symbol = 'BTCUSDT';
 
   -- An audit row the trusted user must not read.
   insert into audit_log (actor, action, entity) values ('${OWNER}', 'promotion', 'strategy_version');
 `);
 
 console.log("  seeded\n");
+
+// Capture the expected universe size while we are still the superuser, so the
+// trusted-user assertion below is a real comparison rather than a tautology.
+const universeSize = await count(
+  `select count(*)::int c from instruments where in_universe`,
+);
+console.log(`  universe size: ${universeSize}\n`);
 
 // ------------------------------------------------------------- the tests --
 
@@ -139,8 +147,14 @@ await db.exec(`reset role`);
 
 console.log("\nTrusted user:");
 await asUser(TRUSTED, async () => {
-  const shared = await count(`select count(*)::int c from instruments`);
-  report(shared === 1, "trusted CAN read the shared universe", `saw ${shared}`);
+  const shared = await count(
+    `select count(*)::int c from instruments where in_universe`
+  );
+  report(
+    shared === universeSize && universeSize > 0,
+    "trusted CAN read the whole shared universe",
+    `saw ${shared} of ${universeSize}`,
+  );
 
   const profiles = await count(`select count(*)::int c from user_profiles`);
   report(profiles === 1, "trusted sees only their own profile", `saw ${profiles}`);

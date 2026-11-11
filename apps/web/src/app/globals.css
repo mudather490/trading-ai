@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/*
+ * A trading terminal palette.
+ *
+ * Dark by default: this app is used at 3am on a phone, and the data is what
+ * matters. Colours are deliberately restrained so that a red or green value
+ * always means something.
+ */
+
+:root {
+  --background: #0a0c10;
+  --foreground: #e6e8ec;
+  --panel: #11141a;
+  --panel-2: #171b23;
+  --border: #232833;
+  --muted: #8b93a3;
+
+  --live: #22c55e;
+  --degraded: #f59e0b;
+  --down: #ef4444;
+  --up: #22c55e;
+
+  --accent: #3b82f6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-live: var(--live);
+  --color-degraded: var(--degraded);
+  --color-down: var(--down);
+  --color-up: var(--up);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-feature-settings: "tnum" 1; /* tabular numerals: prices must not jitter */
+}
+
+/* Numbers line up in columns. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes flash-up {
+  from { background-color: rgba(34, 197, 94, 0.18); }
+  to { background-color: transparent; }
+}
+@keyframes flash-down {
+  from { background-color: rgba(239, 68, 68, 0.18); }
+  to { background-color: transparent; }
+}
+.flash-up { animation: flash-up 600ms ease-out; }
+.flash-down { animation: flash-down 600ms ease-out; }
+
+/* Respect the user's motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .pulse, .flash-up, .flash-down { animation: none; }
+}

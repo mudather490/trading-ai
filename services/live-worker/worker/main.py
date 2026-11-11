@@ -33,6 +33,7 @@ if __package__ in (None, ""):  # allow `python worker/main.py`
 from worker.bars import BarBuilder
 from worker.config import AppConfig
 from worker.connectors import BinanceStream
+from worker.ai.quota import QuotaMonitor
 from worker.supabase_client import SupabaseWriter, iso, utcnow
 
 log = logging.getLogger("worker")
@@ -59,6 +60,7 @@ class LiveWorker:
         self.quotes: dict[str, dict] = {}
         self.instrument_ids: dict[str, str] = {}
         self.instrument_meta: dict[str, dict] = {}
+        self.quota = QuotaMonitor()
         self._stop = asyncio.Event()
         self.bars_published = 0
         self.quotes_published = 0
@@ -206,6 +208,7 @@ class LiveWorker:
                         "uptime_seconds": int(
                             (utcnow() - self.started_at).total_seconds()
                         ),
+                        "ai_quota": self.quota.state(),
                     },
                 )
             except Exception as exc:  # noqa: BLE001

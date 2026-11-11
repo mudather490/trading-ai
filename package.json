@@ -1,5 +1,19 @@
 {
-  "dependencies": {
-    "@electric-sql/pglite": "^0.5.16"
+  "name": "trading-command-center",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Live trading dashboard, strategy lab and news engine. Vercel + Supabase + an always-on worker.",
+  "scripts": {
+    "db:check": "node tools/apply_migrations.mjs",
+    "db:test": "node supabase/tests/rls_test.mjs",
+    "db:seed": "node tools/apply_migrations.mjs",
+    "worker:test": "python -m pytest services/live-worker/tests -q",
+    "test": "npm run db:check && npm run db:test && npm run worker:test",
+    "build:web": "npm --prefix apps/web run build",
+    "lint:sql": "python tools/lint_sql.py",
+    "backup": "python tools/backup.py"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0"
   }
 }
