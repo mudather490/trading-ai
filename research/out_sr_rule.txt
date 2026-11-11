@@ -1,0 +1,65 @@
+==============================================================================================
+TESTING EA TRADING'S EXTRACTABLE RULE: 'CONFIRMED LEVEL' SUPPORT/RESISTANCE SYSTEM
+==============================================================================================
+  BTC-USD daily: 2016-01-01 -> 2026-11-11  n=3968
+
+==============================================================================================
+TEST 1 - course rule + engineer risk (min_rej=2, stop 1.5ATR, target 2R, 1% risk, 15bps rt)
+==============================================================================================
+  S/R confirmed-level system
+     total=+26.5%  CAGR=+2.22%  maxDD=-8.78%  Sharpe=0.68  trades=70  winrate=72.9%  PF=1.75
+
+==============================================================================================
+TEST 2 - does the LEVEL-IDENTIFICATION rule matter? (min_rej 0/1/2/3)
+==============================================================================================
+  min_rej=0
+     total=+4.7%  CAGR=+0.43%  maxDD=-6.80%  Sharpe=0.25  trades=20  winrate=45.0%  PF=1.39
+  min_rej=1
+     total=+29.0%  CAGR=+2.41%  maxDD=-8.78%  Sharpe=0.74  trades=71  winrate=73.2%  PF=1.82
+  min_rej=2
+     total=+26.5%  CAGR=+2.22%  maxDD=-8.78%  Sharpe=0.68  trades=70  winrate=72.9%  PF=1.75
+  min_rej=3
+     total=+21.6%  CAGR=+1.84%  maxDD=-8.78%  Sharpe=0.57  trades=70  winrate=71.4%  PF=1.59
+
+==============================================================================================
+TEST 3 - 'fresh trade only' filter (Ichimoku video rule) ON vs OFF
+==============================================================================================
+  fresh_only=True
+     total=+26.5%  CAGR=+2.22%  maxDD=-8.78%  Sharpe=0.68  trades=70  winrate=72.9%  PF=1.75
+  fresh_only=False
+     total=+26.6%  CAGR=+2.23%  maxDD=-8.78%  Sharpe=0.68  trades=70  winrate=72.9%  PF=1.76
+
+==============================================================================================
+TEST 4 - cost sensitivity
+==============================================================================================
+  fee=0bps slip=0bps
+     total=+29.2%  CAGR=+2.43%  maxDD=-8.47%  Sharpe=0.74  trades=70  winrate=72.9%  PF=1.84
+  fee=5bps slip=2bps
+     total=+28.0%  CAGR=+2.33%  maxDD=-8.61%  Sharpe=0.72  trades=70  winrate=72.9%  PF=1.80
+  fee=10bps slip=5bps
+     total=+26.5%  CAGR=+2.22%  maxDD=-8.78%  Sharpe=0.68  trades=70  winrate=72.9%  PF=1.75
+  fee=20bps slip=10bps
+     total=+23.8%  CAGR=+2.02%  maxDD=-9.10%  Sharpe=0.62  trades=70  winrate=72.9%  PF=1.67
+  fee=40bps slip=20bps
+     total=+18.6%  CAGR=+1.61%  maxDD=-9.73%  Sharpe=0.50  trades=70  winrate=72.9%  PF=1.52
+
+==============================================================================================
+TEST 5 - BASELINE: buy & hold BTC, same window
+==============================================================================================
+  BUY & HOLD BTC: total=+16801.3%  CAGR=+60.37%  maxDD=-83.80%  Sharpe=1.04
+
+==============================================================================================
+TEST 6 - OUT-OF-SAMPLE: select on 2017-2021, apply to 2022+ (single holdout)
+==============================================================================================
+  selected on 2017-2021 (Sharpe 1.81): min_rej=1, stop=3.0ATR, target=1.5R
+  OOS 2022+ IS-selected params
+     total=+2.8%  CAGR=+0.58%  maxDD=-4.90%  Sharpe=0.26  trades=15  winrate=66.7%  PF=1.39
+  OOS 2022+ default params
+     total=-0.9%  CAGR=-0.19%  maxDD=-8.78%  Sharpe=-0.04  trades=25  winrate=60.0%  PF=0.94
+  OOS BUY & HOLD BTC: total=+54.3%  CAGR=+9.33%  maxDD=-66.98%  Sharpe=0.43
+
+==============================================================================================
+VERDICT
+==============================================================================================
+  S/R system Sharpe 0.68 on 70 trades vs buy&hold Sharpe 1.04
+  -> PROMISING but unproven

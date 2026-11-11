@@ -1,0 +1,32 @@
+
+--- TRAIN 2022-2024 ---
+   cost 0 bps (as claimed) CAGR=+28.18%  total= +100.2%  maxDD=-18.10%  Sharpe=1.87  switches=9
+   cost 5 bps/side         CAGR=+27.98%  total=  +99.3%  maxDD=-18.10%  Sharpe=1.86  switches=9
+   cost 10 bps/side        CAGR=+27.77%  total=  +98.4%  maxDD=-18.10%  Sharpe=1.85  switches=9
+   cost 20 bps/side        CAGR=+27.36%  total=  +96.6%  maxDD=-18.10%  Sharpe=1.83  switches=9
+
+--- LOCK 2025+ ---
+   cost 0 bps (as claimed) CAGR=+29.63%  total=  +61.8%  maxDD=-12.25%  Sharpe=1.69  switches=7
+   cost 5 bps/side         CAGR=+29.38%  total=  +61.2%  maxDD=-12.29%  Sharpe=1.68  switches=7
+   cost 10 bps/side        CAGR=+29.14%  total=  +60.6%  maxDD=-12.34%  Sharpe=1.66  switches=7
+   cost 20 bps/side        CAGR=+28.66%  total=  +59.5%  maxDD=-12.43%  Sharpe=1.64  switches=7
+
+--- FULL 2022+ ---
+   cost 0 bps (as claimed) CAGR=+28.41%  total= +220.4%  maxDD=-18.10%  Sharpe=1.77  switches=16
+   cost 5 bps/side         CAGR=+28.19%  total= +217.9%  maxDD=-18.10%  Sharpe=1.76  switches=16
+   cost 10 bps/side        CAGR=+27.97%  total= +215.4%  maxDD=-18.10%  Sharpe=1.74  switches=16
+   cost 20 bps/side        CAGR=+27.54%  total= +210.4%  maxDD=-18.10%  Sharpe=1.72  switches=16
+
+--- DECOMPOSITION: how much of the 'core edge' is just being long gold? (FULL 2022+) ---
+   CORE rotation    total=  +220.4%  CAGR=+28.41%  maxDD=-18.10%  Sharpe=1.77
+   B&H GLD          total=  +106.5%  CAGR=+16.84%  maxDD=-28.26%  Sharpe=1.08
+   B&H QQQ          total=  +111.6%  CAGR=+17.46%  maxDD=-29.56%  Sharpe=0.98
+   fraction of days holding GOLD: 23.8%   (rotation beta to QQQ was ~0.54)
+   => capital-weighted gold contribution approx 24% of the book
+
+--- STRESS: what if 2025+ had NOT been a gold bull market? (regime dependence) ---
+   2022: CORE=   -2.3%   B&H GLD=   -5.2%   B&H QQQ=  -18.3%
+   2023: CORE=  +59.6%   B&H GLD=  +11.8%   B&H QQQ=  +55.9%
+   2024: CORE=  +27.7%   B&H GLD=  +27.0%   B&H QQQ=  +27.7%
+   2025: CORE=  +41.4%   B&H GLD=  +61.5%   B&H QQQ=  +21.0%
+   2026: CORE=  +14.3%   B&H GLD=   -7.3%   B&H QQQ=  +10.4%

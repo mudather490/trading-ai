@@ -1,0 +1,79 @@
+============================================================================================
+EA TRADING PREDICTION SCORECARD vs NAIVE BASELINES
+============================================================================================
+
+Method: each claim = (video date, asset, direction, horizon). 'HIT' = price moved >=thr%
+in the predicted direction within the stated horizon. Baseline A = 'naive continuation':
+always predict the direction the market actually went (i.e. what a trend-follower who
+just looked at the chart would have said). Baseline C = buy & hold return over the window.
+
+--- threshold +-10%   (n=25 claims) ---
+   EA Trading hit rate           :  72.0%  (18/25)   95% CI [52%, 86%]
+   Naive-continuation baseline    :  88.0%  (22/25)   95% CI [70%, 96%]
+   -> EXCESS over naive baseline : -16.0 pp
+   Agreement with naive baseline  :  84.0% of calls were directionally identical to just following the tape
+   Avg buy&hold return over same windows: +51.6%
+
+--- threshold +-25%   (n=25 claims) ---
+   EA Trading hit rate           :  56.0%  (14/25)   95% CI [37%, 73%]
+   Naive-continuation baseline    :  68.0%  (17/25)   95% CI [48%, 83%]
+   -> EXCESS over naive baseline : -12.0 pp
+   Agreement with naive baseline  :  88.0% of calls were directionally identical to just following the tape
+   Avg buy&hold return over same windows: +51.6%
+
+--- threshold +-50%   (n=25 claims) ---
+   EA Trading hit rate           :  28.0%  (7/25)   95% CI [14%, 48%]
+   Naive-continuation baseline    :  40.0%  (10/25)   95% CI [23%, 59%]
+   -> EXCESS over naive baseline : -12.0 pp
+   Agreement with naive baseline  :  88.0% of calls were directionally identical to just following the tape
+   Avg buy&hold return over same windows: +51.6%
+
+--------------------------------------------------------------------------------------------
+PER-CLAIM DETAIL (threshold +10%)
+--------------------------------------------------------------------------------------------
+id     date        asset call  result naive       B&H  note
+C1a    2023-10-24  BTC   UP    HIT    HIT      +24.7%  C1a
+C1b    2023-10-24  BTC   UP    HIT    HIT     +175.6%  C1b
+C2a    2023-10-24  BTC   DOWN  MISS   HIT     +175.6%  C2a
+C3     2023-06-17  BTC   UP    HIT    HIT      +59.4%  C3
+C4     2023-12-06  BTC   UP    HIT    HIT     +113.6%  C4
+C5a    2023-11-09  BTC   UP    HIT    HIT     +154.6%  C5a
+C5b    2023-11-09  BTC   UP    HIT    HIT     +138.5%  C5b
+C6a    2023-11-03  BTC   DOWN  MISS   HIT     +169.0%  C6a
+C6b    2023-11-03  BTC   DOWN  MISS   HIT     +152.0%  C6b
+C7     2023-10-28  BTC   UP    HIT    HIT     +174.1%  C7
+C8     2024-01-04  BTC   UP    HIT    HIT     +111.5%  C8
+C9a    2025-10-17  BTC   DOWN  HIT    HIT      -17.8%  C9a
+C9b    2025-10-17  BTC   DOWN  HIT    HIT      -30.9%  C9b
+C10a   2025-06-06  BTC   DOWN  HIT    HIT      -16.2%  C10a
+C10b   2025-06-06  BTC   DOWN  HIT    HIT      -29.5%  C10b
+C11a   2025-12-28  BTC   DOWN  HIT    HIT      -33.3%  C11a
+C11b   2025-12-28  BTC   DOWN  HIT    HIT      -16.3%  C11b
+C11c   2025-12-28  GOLD  DOWN  HIT    HIT      -11.5%  C11c
+C11d   2025-12-28  SPX   DOWN  MISS   HIT       +8.5%  C11d
+C12    2026-01-31  BTC   DOWN  HIT    HIT       -6.4%  C12
+C12g   2026-01-31  GOLD  DOWN  HIT    HIT      -15.1%  C12g
+C13a   2026-11-07  BTC   DOWN  MISS   MISS      -2.9%  C13a
+C13b   2026-11-07  SPX   DOWN  MISS   MISS      +2.0%  C13b
+C14    2026-10-30  BTC   DOWN  MISS   MISS      -4.7%  C14
+C15    2026-07-04  BTC   UP    HIT    HIT      +16.6%  C15
+
+--------------------------------------------------------------------------------------------
+SKEW CHECK: how much of the scorecard came from the single crypto bull run (Oct 2023 - Mar 2024)?
+--------------------------------------------------------------------------------------------
+  2023-2024 (bull run era)   n=25  EA  72.7%  naive 100.0%  excess -27.3pp
+  2025-2026 (later)          n=25  EA  71.4%  naive  78.6%  excess  -7.1pp
+
+--------------------------------------------------------------------------------------------
+DIRECTION-ONLY CALLS (explicit 'crash' / 'explosion' framing, excluding hedged ones)
+--------------------------------------------------------------------------------------------
+  2023-11-03  collapse               -> MISS (naive would be HIT )
+  2023-11-09  explosion to 100k      -> HIT  (naive would be HIT )
+  2023-10-28  explosion coming       -> HIT  (naive would be HIT )
+  2025-10-17  crash                  -> HIT  (naive would be HIT )
+  2025-06-06  catastrophe            -> HIT  (naive would be HIT )
+  2026-11-07  historic crash         -> MISS (naive would be MISS)
+  2026-10-30  crisis                 -> MISS (naive would be MISS)
+  2026-07-04  new rally              -> HIT  (naive would be HIT )
+  2025-12-28  2026 decline           -> HIT  (naive would be HIT )
+  explicit calls: 6/9 = 67%

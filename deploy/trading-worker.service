@@ -1,0 +1,41 @@
+# systemd unit for the live worker on the GCP free e2-micro VM.
+#
+# Install:
+#   sudo cp deploy/trading-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now trading-worker
+#
+# The worker restarts on failure and on reboot. It must never be the only
+# copy of anything: all state lives in Supabase, so a rebuild is cheap.
+
+[Unit]
+Description=Trading Command Center live worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/opt/trading-ai/services/live-worker
+EnvironmentFile=/opt/trading-ai/services/live-worker/.env
+ExecStart=/opt/trading-ai/services/live-worker/.venv/bin/python -m worker.main
+Restart=always
+RestartSec=5
+
+# The worker should never need to be killed by the OOM killer. If it is, the
+# heartbeat goes stale and the app correctly refuses to issue tickets.
+MemoryMax=512M
+
+# Hardening. The worker needs no network beyond the venue APIs and Supabase.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/trading-ai/services/live-worker
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
