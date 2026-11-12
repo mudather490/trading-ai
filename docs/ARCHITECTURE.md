@@ -104,7 +104,7 @@ credentials*, and that separation is the custody boundary:
 
 ## 2. The invariants
 
-Twenty-two rules. Each is enforced in code and, where it matters, has a test.
+Twenty-four rules. Each is enforced in code and, where it matters, has a test.
 
 ### The execution path
 
@@ -115,7 +115,7 @@ Twenty-two rules. Each is enforced in code and, where it matters, has a test.
 | **I-3** | No raw ticks in Postgres | `latest_quotes` is one row per symbol; bars only. Retention: 1m 14d, 5m 90d, 1h 2y, 1d forever |
 | **I-4** | Every price row carries provenance | `source`, `official`, `as_of` on `bars` and `latest_quotes`; `data_quality` on `instruments` |
 | **I-5** | No LLM-generated number reaches a ticket | Grounded-number validator; `get_ticket()` is pure SQL |
-| **I-6** | News is a warning, never a sizing input | `get_ticket()` reads `catalysts` only to append a warning; news features are legal at 1h/1d, forbidden at 1m |
+| **I-6** | News is a warning, never a sizing input | `get_ticket()` reads `catalysts` only to append a warning; news features are legal at 1h/1d, forbidden at 1m. The economic calendar publishes into `catalysts`, so event risk reaches the ticket as a warning through the same path — it never changes a size |
 | **I-7** | Promotion is a code predicate | `promote_strategy()`; owner-only; the policy is a versioned `gate_policy` row |
 | **I-8** | `WAIT` / `NO_TRADE` / `STALE` / `ENGINE_UNAVAILABLE` are success states | UI + API contract; all four render as a normal card |
 | **I-9** | RLS is tested | 27 behaviour tests across anon / trusted / owner / service_role |
@@ -132,6 +132,8 @@ Twenty-two rules. Each is enforced in code and, where it matters, has a test.
 | **I-20** | Every AI path has a deterministic fallback | `NullProvider`; the app keeps pricing, signalling and ticketing |
 | **I-21** | Rules fire alerts; AI writes the text | `fire_alert()` takes `rule_id`; `alerts.ai_summary` is advisory only |
 | **I-22** | "I don't know" is a first-class answer | Ticket, news panel and chat all carry a confidence/uncertainty state |
+| **I-23** | Untrusted text may not give orders | `detect_prompt_injection` + `sanitize_untrusted` + `wrap_untrusted`; the live sidecar has no tool access, so a fenced headline can only ever be data |
+| **I-24** | An agent task cannot outspend its budget | `Budget` (tokens, cost, wall clock, calls); the sidecar refuses the call **before** the request leaves the machine |
 
 ---
 
@@ -222,6 +224,26 @@ if not result.valid:
 cleaned, stripped = grounded_numbers(text, input_payload)
 ```
 
+### Two more rules the sidecar now enforces
+
+```python
+# 4. Fenced. Untrusted text is data, never instructions.
+verdict = detect_prompt_injection(headline)
+prompt = wrap_untrusted(verdict.sanitized, label="news")
+
+# 5. Bounded. A task stops when it runs out of allowance.
+if self.budget.breach() is not None:
+    return ValidationResult(valid=False, reason="budget exhausted")
+```
+
+The live sidecar has **no tool access at all**. A model in this system cannot
+fetch a URL, call a broker, or write a row. It receives a prepared evidence
+pack and returns a validated object. Everything that moves money is a
+deterministic function of stored data.
+
+The provenance of these patterns, and the licence reasoning behind them, is
+in [`PROVENANCE.md`](PROVENANCE.md).
+
 ---
 
 ## 5. Data model
@@ -271,7 +293,7 @@ Both are `SECURITY DEFINER`, both are granted only to `authenticated` or
 | Phase | Scope | Status |
 |---|---|---|
 | **0** | Schema, RLS, ticket/gate functions, worker, web app, AI sidecar, ops tooling | ✅ **Complete** |
-| **1** | Alpaca + OANDA connectors, 12 symbols, retention, data-quality checks, local FinBERT | ⬜ Next |
+| **1** | Alpaca + OANDA connectors, 12 symbols, retention, data-quality checks, local FinBERT, economic calendar | 🟡 **In progress** — connectors for all three venues, history backfill and the economic calendar are built and tested; local FinBERT remains |
 | **2** | Signal engine, Decision Center, Time Machine odds band, journal, Telegram, chat | ⬜ |
 | **3** | vectorbt + Optuna, promotion gate, AI Feature Gate, AI Ranking Score, shadow mode, weekly report | ⬜ |
 | **4** | Two-stage news pipeline, event-study library, catalyst cards, positioning, PWA, hardening | ⬜ |
@@ -281,9 +303,10 @@ Both are `SECURITY DEFINER`, both are granted only to `authenticated` or
 
 | Suite | Count | What it proves |
 |---|---|---|
+| `python tools/arch_ratchet.py` | 6 rules | The web tier never imports the worker; nothing can place an order; the AI sidecar never names a decision table; the service-role key stays in its allowed paths; no AGPL source is in first-party code; vendored code is attributed. A self-test proves every rule fires on a deliberate breach |
 | `node tools/apply_migrations.mjs` | 6 migrations, 12 invariants | The schema applies to real Postgres and every structural invariant holds |
 | `node supabase/tests/rls_test.mjs` | 27 tests | The custody boundary: anon sees nothing, a trusted user cannot read the owner's journal, only the owner promotes |
-| `pytest services/live-worker/tests` | 53 tests | Bars close exactly once; signal keys are stable; the worker refuses forbidden writes; the AI sidecar grounds numbers and refuses private data on a free tier |
+| `pytest services/live-worker/tests` | 101 tests | Bars close exactly once; signal keys are stable; the worker refuses forbidden writes; the AI sidecar grounds numbers and refuses private data on a free tier; all three venues parse and label their data quality correctly; the budget stops a task; untrusted text cannot give orders; duplicate headlines collapse into one cluster; the economic calendar reaches the right instruments and the right clock |
 | `pytest services/research-worker/tests` | 7 tests | **S18 reproduces: +28.91% CAGR, Sharpe 1.79, −18.45% maxDD** (published: +28.41%, 1.77, −18.10%) and the engine agrees with an independent implementation to 0.000000 |
 
 ---
@@ -300,8 +323,10 @@ apps/web/                     Next.js 16 app
 services/live-worker/         the live engine (GCP)
   worker/main.py              the loop: streams, bars, heartbeat, broadcast, jobs
   worker/bars.py              bar builder + signal idempotency key
-  worker/connectors/          Binance (public streams, keyless)
-  worker/ai/                  sidecar · providers · quota
+  worker/connectors/          base (the Trade contract) · binance · alpaca · oanda
+  worker/ai/                  sidecar · providers · quota · budget · guardrails
+  worker/calendar/            the economic calendar (Finnhub) and the catalyst planner
+  worker/news/                cluster (one story, one cluster)
   worker/supabase_client.py   guarded writes
 
 services/research-worker/     the research engine (your PC)
@@ -318,7 +343,7 @@ packages/vendor/              third-party code, with ATTRIBUTION.md
 supabase/migrations/          6 migrations
 supabase/tests/rls_test.mjs   the custody boundary
 
-tools/                        apply_migrations · backup · lint_sql
+tools/                        apply_migrations · backup · lint_sql · arch_ratchet
 ```
 
 ---

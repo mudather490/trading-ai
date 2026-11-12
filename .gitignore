@@ -52,3 +52,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Local emulator database (PGlite data directory)
+.local/

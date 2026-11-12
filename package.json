@@ -4,14 +4,19 @@
   "private": true,
   "description": "Live trading dashboard, strategy lab and news engine. Vercel + Supabase + an always-on worker.",
   "scripts": {
+    "ratchet": "python tools/arch_ratchet.py --root . && python tools/arch_ratchet.py --self-test",
     "db:check": "node tools/apply_migrations.mjs",
     "db:test": "node supabase/tests/rls_test.mjs",
+    "db:local": "node tools/local_supabase.mjs",
+    "dev:local": "node tools/local_stack.mjs",
     "worker:test": "python -m pytest services/live-worker/tests -q",
     "research:test": "python -m pytest services/research-worker/tests -q",
-    "test": "npm run db:check && npm run db:test && npm run worker:test && npm run research:test",
+    "test": "npm run ratchet && npm run db:check && npm run db:test && npm run worker:test && npm run research:test",
     "build:web": "npm --prefix apps/web run build",
     "lint:sql": "python tools/lint_sql.py",
-    "backup": "python tools/backup.py"
+    "backup": "python tools/backup.py",
+    "telegram:setup": "node tools/telegram_setup.mjs",
+    "telegram:local": "node tools/telegram_longpoll.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0"

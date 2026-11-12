@@ -48,6 +48,74 @@ class Engine:
         self._adx_periods = tuple(adx_periods)
         self._donchian_periods = tuple(donchian_periods)
 
+    @classmethod
+    def for_strategy(
+        cls,
+        symbol: str,
+        timeframe: str,
+        params: Mapping[str, Any],
+        **overrides: Any,
+    ) -> "Engine":
+        """An engine that computes the indicators THIS strategy asks for.
+
+        The default engine computes a fixed set of periods (EMA 20/50, SMA
+        50/100/200, ...). A candidate whose parameters say `fast = 16` asks
+        for `ema_16`, which the default engine does not have: `ctx.indicator`
+        returns None, the strategy treats that as "no opinion", and the
+        candidate silently NEVER trades.
+
+        That failure is invisible. The backtest reports zero trades, the
+        performance record is honest about it, and the gate rejects the
+        candidate for having too few trades — a correct verdict for a wrong
+        reason.
+
+        So the engine follows the parameters. Every numeric parameter whose
+        name mentions a period is added to the matching indicator family.
+        """
+        ma_periods = {50, 100, 200}
+        ema_periods = {20, 50}
+        rsi_periods = {2, 14}
+        atr_periods = {14}
+        adx_periods = {14}
+        donchian_periods = {20, 55}
+
+        for key, value in (params or {}).items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            period = int(value)
+            if period < 2 or period > 1000:
+                continue
+            name = key.lower()
+            if "ema" in name:
+                ema_periods.add(period)
+            elif "adx" in name:
+                adx_periods.add(period)
+            elif "atr" in name:
+                atr_periods.add(period)
+            elif "rsi" in name:
+                rsi_periods.add(period)
+            elif "donchian" in name or "channel" in name:
+                donchian_periods.add(period)
+            elif "entry" in name or "exit" in name:
+                donchian_periods.add(period)
+            elif "ma" in name or name in ("fast", "slow", "period"):
+                # `fast` and `slow` are ambiguous on purpose: the trend
+                # template reads them as EMAs and the rotation template as
+                # SMAs. Computing both costs little and removes the guess.
+                ema_periods.add(period)
+                ma_periods.add(period)
+
+        options: dict[str, Any] = {
+            "ma_periods": sorted(ma_periods),
+            "ema_periods": sorted(ema_periods),
+            "rsi_periods": sorted(rsi_periods),
+            "atr_periods": sorted(atr_periods),
+            "adx_periods": sorted(adx_periods),
+            "donchian_periods": sorted(donchian_periods),
+        }
+        options.update(overrides)
+        return cls(symbol, timeframe, **options)
+
     def add_bar(self, bar: Bar) -> None:
         """Append a CLOSED bar and recompute the indicators."""
         self.bars.append(bar)

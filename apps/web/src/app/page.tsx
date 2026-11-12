@@ -1,11 +1,15 @@
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { loadCommandCenter, requireUser } from "@/lib/data";
-import { LiveWatchlist } from "@/components/LiveWatchlist";
-import { DecisionCenter } from "@/components/DecisionCenter";
 import { EngineBadge } from "@/components/EngineBadge";
+import { AppNav } from "@/components/AppNav";
+import { FeedBanner } from "@/components/FeedBanner";
 import { TimeframePicker, TimeframeProvider } from "@/components/TimeframePicker";
 import { SymbolProvider } from "@/components/SymbolProvider";
+import {
+  DecisionCenterClient,
+  LiveWatchlistClient,
+} from "@/components/CommandCenterClient";
 
 /**
  * The Command Center must never be prerendered.
@@ -41,7 +45,7 @@ export default async function CommandCenterPage() {
   // The session read happens first and unconditionally.
   await requireUser();
 
-  const { instruments, quotes, engine, configured, error } =
+  const { instruments, quotes, engine, feeds, configured, error } =
     await loadCommandCenter();
 
   if (!configured) {
@@ -84,10 +88,19 @@ export default async function CommandCenterPage() {
     );
   }
 
+  // Open on an instrument that actually has a price. Alphabetically the
+  // first symbol is AAPL, which is closed at this hour and looks broken.
+  const quoted = new Set(quotes.map((quote) => quote.instrument_id));
+  const initialSymbol =
+    instruments.find((instrument) => quoted.has(instrument.id))?.symbol ??
+    instruments[0]?.symbol ??
+    null;
+
   return (
-    <SymbolProvider initial={instruments[0]?.symbol ?? null}>
+    <SymbolProvider initial={initialSymbol}>
       <TimeframeProvider>
         <div className="flex-1 flex flex-col min-h-0">
+          <AppNav />
           <header className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border">
             <div className="flex items-center gap-3 min-w-0">
               <h1 className="text-sm font-semibold tracking-tight shrink-0">
@@ -102,6 +115,8 @@ export default async function CommandCenterPage() {
               <EngineBadge engine={engine} />
             </div>
           </header>
+
+          <FeedBanner feeds={feeds} />
 
           <div className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(200px,240px)_1fr] min-h-0">
             <aside className="border-b md:border-b-0 md:border-r border-border min-h-0 h-48 md:h-auto">
@@ -118,32 +133,4 @@ export default async function CommandCenterPage() {
       </TimeframeProvider>
     </SymbolProvider>
   );
-}
-
-// Small wrappers so the client components can read the shared selection
-// context without the page having to be a client component.
-
-import { LiveWatchlist as LiveWatchlistInner } from "@/components/LiveWatchlist";
-import { DecisionCenter as DecisionCenterInner } from "@/components/DecisionCenter";
-import { useSymbol } from "@/components/SymbolProvider";
-import { useTimeframe } from "@/components/TimeframePicker";
-
-function LiveWatchlistClient(props: {
-  instruments: Parameters<typeof LiveWatchlistInner>[0]["instruments"];
-  initialQuotes: Parameters<typeof LiveWatchlistInner>[0]["initialQuotes"];
-}) {
-  const { selected, setSelected } = useSymbol();
-  return (
-    <LiveWatchlistInner
-      {...props}
-      selected={selected}
-      onSelect={setSelected}
-    />
-  );
-}
-
-function DecisionCenterClient() {
-  const { selected } = useSymbol();
-  const { timeframe } = useTimeframe();
-  return <DecisionCenterInner symbol={selected} timeframe={timeframe} />;
 }

@@ -118,6 +118,9 @@ class AlpacaConfig:
             key_id=os.environ.get("ALPACA_KEY_ID"),
             secret_key=os.environ.get("ALPACA_SECRET_KEY"),
             symbols=symbols,
+            websocket_url=os.environ.get(
+                "ALPACA_WS_BASE", "wss://stream.data.alpaca.markets/v2/iex"
+            ),
         )
 
     @property
@@ -146,6 +149,9 @@ class OandaConfig:
             token=os.environ.get("OANDA_TOKEN"),
             account_id=os.environ.get("OANDA_ACCOUNT_ID"),
             symbols=symbols,
+            practice_stream=os.environ.get(
+                "OANDA_STREAM_BASE", "https://stream-fxpractice.oanda.com"
+            ),
         )
 
     @property
@@ -165,6 +171,9 @@ class WorkerConfig:
     realtime_bundle_seconds: int = 5
     # Which timeframes we build bars for.
     timeframes: tuple[str, ...] = ("1m", "5m", "1h", "1d")
+    # How often the economic calendar is refreshed. The schedule changes on
+    # its own, so a stale calendar is a calendar that lies.
+    calendar_refresh_hours: int = 6
     log_level: str = "INFO"
 
     @classmethod
@@ -177,6 +186,9 @@ class WorkerConfig:
                 s.strip()
                 for s in os.environ.get("TIMEFRAMES", "1m,5m,1h,1d").split(",")
                 if s.strip()
+            ),
+            calendar_refresh_hours=int(
+                os.environ.get("CALENDAR_REFRESH_HOURS", "6")
             ),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
         )

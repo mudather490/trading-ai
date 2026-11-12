@@ -33,6 +33,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
+from .budget import Budget
+
 log = logging.getLogger(__name__)
 
 # Numbers we accept as "grounded" if they appear in the input.
@@ -259,6 +261,10 @@ class AISidecar:
     # Optional quota tracker. When the provider's free tier is exhausted the
     # sidecar refuses rather than hammering it.
     quota: Any = None
+    # Optional per-task budget. When a ceiling breaks, the call is refused
+    # BEFORE the request leaves the machine. This is what makes an agent loop
+    # safe to run unattended.
+    budget: Budget | None = None
 
     def run(
         self,
@@ -321,6 +327,39 @@ class AISidecar:
         prompt_hash = hash_payload(self.prompt_template or prompt)
         input_hash = hash_payload(input_payload if input_payload is not None else prompt)
 
+        # Budget check BEFORE the request leaves the machine. A loop that has
+        # spent its allowance stops, it does not keep spending.
+        if self.budget is not None:
+            breach = self.budget.breach()
+            if breach is not None:
+                reason = (
+                    f"The task budget is exhausted ({breach}). "
+                    "No further model calls will be made."
+                )
+                self._log(
+                    {
+                        "capability": self.capability,
+                        "provider": self.provider.name,
+                        "model_id": getattr(self.provider, "model_id", "unknown"),
+                        "prompt_hash": prompt_hash,
+                        "prompt_version": self.prompt_version,
+                        "seed": self.seed,
+                        "temperature": self.temperature,
+                        "input_hash": input_hash,
+                        "input_preview": _preview(input_payload),
+                        "output_json": None,
+                        "valid": False,
+                        "invalid_reason": reason,
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "latency_ms": 0,
+                        "cost_usd": 0,
+                        "data_class": self.data_class,
+                        "user_id": user_id,
+                    }
+                )
+                return ValidationResult(valid=False, reason=reason)
+
         started = time.monotonic()
         text = ""
         tokens_in = 0
@@ -334,6 +373,8 @@ class AISidecar:
             )
             if self.quota is not None:
                 self.quota.record(self.provider.name)
+            if self.budget is not None:
+                self.budget.record(tokens_in=tokens_in, tokens_out=tokens_out)
             result = validate_json(
                 text,
                 expected_keys if expected_keys is not None else self.required_keys,

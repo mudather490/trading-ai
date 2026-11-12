@@ -197,6 +197,85 @@ async def test_the_heartbeat_carries_the_stream_health(worker):
     assert hb["lag_ms"]["binance"] == 42
 
 
+@pytest.mark.asyncio
+async def test_the_broadcast_bundle_is_keyed_by_instrument_id(worker):
+    """The dashboard keys its quote map by instrument id, not by symbol.
+
+    A bundle keyed by symbol looks alive and never moves. This is the test
+    that says so.
+    """
+    await worker.load_instruments()
+    await worker.handle_trade("BTCUSDT", 100.0, 1.0, T0)
+
+    payload = worker.build_broadcast_payload()
+    worker.writer.broadcast("ticks", "bundle", payload)
+    channel, event, sent = worker.writer.broadcasts[0]
+    assert channel == "ticks"
+    assert event == "bundle"
+
+    quotes = sent["quotes"]
+    instrument_id = worker.instrument_ids["BTCUSDT"]
+    assert instrument_id in quotes, "the bundle must be keyed by instrument id"
+    assert "BTCUSDT" not in quotes, "the symbol is not the key"
+    assert quotes[instrument_id]["price"] == 100.0
+    assert quotes[instrument_id]["symbol"] == "BTCUSDT"
+
+
+@pytest.mark.asyncio
+async def test_the_change_percentage_is_measured_against_the_first_price(worker):
+    await worker.load_instruments()
+    await worker.handle_trade("BTCUSDT", 100.0, 1.0, T0)
+    await worker.handle_trade("BTCUSDT", 101.0, 1.0, T0 + timedelta(seconds=1))
+
+    assert worker.quotes["BTCUSDT"]["change_pct"] == pytest.approx(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_instrument_registry_is_reloaded_and_the_write_retried():
+    """A rebuilt database invalidates the cached instrument ids.
+
+    The worker must notice, reload and try again rather than throwing away
+    every price.
+    """
+    from worker.config import (
+        AppConfig,
+        BinanceConfig,
+        SupabaseConfig,
+        WorkerConfig,
+    )
+
+    class StaleWriter(FakeWriter):
+        """Fails the first write with a foreign key error, like a rebuild."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures = 1
+
+        def upsert_quote(self, instrument_id, **kwargs):
+            if self.failures > 0:
+                self.failures -= 1
+                raise RuntimeError(
+                    "insert or update on table latest_quotes violates foreign key constraint"
+                )
+            super().upsert_quote(instrument_id, **kwargs)
+
+    config = AppConfig(
+        supabase=SupabaseConfig(url="http://localhost", service_role_key="test-key"),
+        worker=WorkerConfig(worker_id="test-worker", timeframes=("1m",)),
+        binance=BinanceConfig(),
+        alpaca=None,
+        oanda=None,
+        enabled_venues=(),
+    )
+    w = LiveWorker(config)
+    w.writer = StaleWriter()
+    await w.load_instruments()
+    await w.handle_trade("BTCUSDT", 100.0, 1.0, T0)
+
+    assert len(w.writer.quotes) == 1, "the write must be retried after the reload"
+    assert w.writer.quotes[0]["last"] == 100.0
+
+
 # --------------------------------------------------------- the guardrail --
 
 

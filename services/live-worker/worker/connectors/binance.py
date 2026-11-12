@@ -22,11 +22,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import AsyncIterator, Awaitable, Callable
+from typing import AsyncIterator, Callable
+
+from .base import Trade, reconnect_delay
 
 log = logging.getLogger(__name__)
 
@@ -37,18 +37,6 @@ CONNECTION_MAX_LIFETIME = 23 * 3600
 # worker that drops at the same time reconnects at the same time.
 RECONNECT_BASE = 1.0
 RECONNECT_MAX = 60.0
-
-
-@dataclass(frozen=True)
-class Trade:
-    """One normalised trade."""
-
-    symbol: str
-    price: float
-    size: float
-    ts: datetime
-    # 'buy' means the taker bought; 'sell' means the taker sold.
-    side: str | None = None
 
 
 def _parse_ts(ms: int | None) -> datetime:
@@ -105,8 +93,7 @@ class BinanceStream:
             except Exception as exc:  # noqa: BLE001
                 self._connected = False
                 self.reconnects += 1
-                delay = min(RECONNECT_BASE * (2 ** (self.reconnects - 1)), RECONNECT_MAX)
-                delay += random.uniform(0, delay * 0.3)  # jitter
+                delay = reconnect_delay(self.reconnects, RECONNECT_BASE, RECONNECT_MAX)
                 log.warning(
                     "binance stream dropped (%s); reconnecting in %.1fs (attempt %d)",
                     exc,
@@ -185,6 +172,7 @@ class BinanceStream:
                 ts=_parse_ts(data.get("T")),
                 # 'm' is "is the buyer the market maker". If true, the taker SOLD.
                 side="sell" if data.get("m") else "buy",
+                venue="binance",
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -193,16 +181,27 @@ class BinanceStream:
         self._closed = True
 
 
-async def fetch_klines(
+def fetch_klines(
     symbol: str,
     interval: str = "1m",
     limit: int = 500,
     base_url: str = "https://api.binance.com",
+    end_time: datetime | None = None,
 ) -> list[dict]:
     """Backfill closed bars over REST. Used to seed a fresh install.
 
     Returns the raw kline rows. The key is Binance's own, so the bars carry
     their own provenance.
+
+    This is deliberately SYNCHRONOUS. It uses urllib, which blocks, so making
+    it `async def` bought nothing and cost a real bug: the caller treated
+    the returned coroutine as a list of bars and every backfill failed with
+    "'coroutine' object is not iterable".
+
+    `end_time` pages BACKWARDS through history. Binance returns at most 1000
+    candles per call, and without a start or end it returns the most recent
+    ones, so a five-year daily series needs several requests. A research
+    candidate needs the years.
     """
     import urllib.parse
     import urllib.request
@@ -210,8 +209,11 @@ async def fetch_klines(
     url = (
         f"{base_url.rstrip('/')}/api/v3/klines"
         f"?symbol={urllib.parse.quote(symbol.upper())}"
-        f"&interval={interval}&limit={limit}"
+        f"&interval={interval}&limit={min(max(int(limit), 1), 1000)}"
     )
+    if end_time is not None:
+        url += f"&endTime={int(end_time.timestamp() * 1000)}"
+
     req = urllib.request.Request(url, headers={"User-Agent": "trading-command-center/0.1"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         rows = json.loads(resp.read().decode("utf-8"))
@@ -231,3 +233,55 @@ async def fetch_klines(
             }
         )
     return out
+
+
+def fetch_bars(
+    symbol: str,
+    timeframe: str = "1m",
+    limit: int = 500,
+    base_url: str = "https://api.binance.com",
+) -> list[dict]:
+    """Closed bars in the shape every connector shares.
+
+    `ts` is the bar's OPEN time in UTC, which is the key the `bars` table
+    uses, so two venues cannot disagree about what a bar is called.
+
+    Binance returns at most 1000 candles per request, so a longer history
+    is fetched by paging BACKWARDS: the next request ends one millisecond
+    before the oldest bar we already have. Without this, a daily series was
+    capped at 1000 bars (~2.7 years) and a research candidate had too few
+    trades to be judged at all.
+    """
+    from datetime import timedelta
+
+    collected: list[dict] = []
+    end: datetime | None = None
+
+    while len(collected) < limit:
+        requested = min(1000, limit - len(collected))
+        batch = fetch_klines(
+            symbol,
+            interval=timeframe,
+            limit=requested,
+            base_url=base_url,
+            end_time=end,
+        )
+        if not batch:
+            break
+        collected = batch + collected
+        if len(batch) < requested:
+            # Binance had nothing more to give.
+            break
+        end = batch[0]["ts"] - timedelta(milliseconds=1)
+
+    return [
+        {
+            "ts": row["ts"],
+            "open": row["open"],
+            "high": row["high"],
+            "low": row["low"],
+            "close": row["close"],
+            "volume": row["volume"],
+        }
+        for row in collected[:limit]
+    ]

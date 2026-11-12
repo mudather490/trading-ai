@@ -81,9 +81,11 @@ class GroqProvider(BaseProvider):
     name = "groq"
     free_tier = True
 
-    def __init__(self, api_key: str | None = None, model_id: str = "openai/gpt-oss-120b") -> None:
+    def __init__(self, api_key: str | None = None, model_id: str | None = None) -> None:
         super().__init__(api_key or os.environ.get("GROQ_API_KEY"))
-        self.model_id = model_id
+        self.model_id = model_id or os.environ.get(
+            "GROQ_MODEL", "openai/gpt-oss-120b"
+        )
         self.base_url = "https://api.groq.com/openai/v1"
 
     @property
@@ -132,9 +134,11 @@ class GeminiProvider(BaseProvider):
     name = "gemini"
     free_tier = True
 
-    def __init__(self, api_key: str | None = None, model_id: str = "gemini-2.5-flash") -> None:
+    def __init__(self, api_key: str | None = None, model_id: str | None = None) -> None:
         super().__init__(api_key or os.environ.get("GEMINI_API_KEY"))
-        self.model_id = model_id
+        self.model_id = model_id or os.environ.get(
+            "GEMINI_MODEL", "gemini-2.5-flash"
+        )
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     @property
@@ -215,3 +219,55 @@ def build_provider(preferred: str | None = None) -> BaseProvider:
 
     log.warning("No AI provider configured. The app will use deterministic fallbacks.")
     return NullProvider()
+
+
+# Which provider does which job.
+#
+# Two free tiers, two jobs. Groq is fast and its quota is the smallest, so it
+# does the interactive work (explanations, the evidence-bound thesis, the
+# ranking, and the Tier A parameter proposals). Gemini has the generous bulk
+# quota, so it does the news extraction and clustering.
+JOB_ROUTES: dict[str, tuple[str, ...]] = {
+    "chat": ("groq", "gemini"),
+    "thesis": ("groq", "gemini"),
+    "ranking": ("groq", "gemini"),
+    "mutation": ("groq", "gemini"),
+    "news": ("gemini", "groq"),
+}
+
+
+class ProviderRouter:
+    """Picks the provider by the JOB, not by a single global preference.
+
+    One key for everything wastes the shape of each provider: Groq's quota is
+    small but its latency is tiny, and Gemini's quota is large but slower.
+    The router sends the work to the right one and falls back to whichever
+    is configured, so a missing key never breaks a feature — it only changes
+    which model answers.
+    """
+
+    def __init__(self) -> None:
+        self._providers: dict[str, BaseProvider] = {
+            "groq": GroqProvider(),
+            "gemini": GeminiProvider(),
+        }
+
+    def for_job(self, job: str) -> BaseProvider:
+        for name in JOB_ROUTES.get(job, ("groq", "gemini")):
+            provider = self._providers[name]
+            if provider.configured:
+                return provider
+        for provider in self._providers.values():
+            if provider.configured:
+                return provider
+        return NullProvider()
+
+    def state(self) -> dict[str, dict[str, Any]]:
+        return {
+            name: {
+                "configured": provider.configured,
+                "model_id": getattr(provider, "model_id", "unknown"),
+                "daily_cap": getattr(provider, "daily_cap", 0),
+            }
+            for name, provider in self._providers.items()
+        }

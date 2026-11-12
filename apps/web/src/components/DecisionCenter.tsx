@@ -34,7 +34,11 @@ export function DecisionCenter({
 }) {
   const [ticket, setTicket] = useState<TicketResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [journaled, setJournaled] = useState(false);
+  const [journalState, setJournalState] = useState<
+    "idle" | "choosing" | "saving" | "saved" | "error"
+  >("idle");
+  const [journalAction, setJournalAction] = useState<string | null>(null);
+  const [journalError, setJournalError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!symbol) return;
@@ -46,7 +50,9 @@ export function DecisionCenter({
       );
       const data = (await res.json()) as TicketResponse;
       setTicket(data);
-      setJournaled(false);
+      setJournalState("idle");
+      setJournalAction(null);
+      setJournalError(null);
     } catch {
       setTicket({
         status: "engine_unavailable",
@@ -56,6 +62,33 @@ export function DecisionCenter({
       setLoading(false);
     }
   }, [symbol, timeframe]);
+
+  const journal = useCallback(
+    async (action: "took" | "skipped") => {
+      if (!symbol) return;
+      setJournalState("saving");
+      setJournalError(null);
+      try {
+        const res = await fetch("/api/journal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instrument: symbol, timeframe, action }),
+        });
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok) {
+          setJournalError(data.error ?? "Could not journal this ticket.");
+          setJournalState("error");
+          return;
+        }
+        setJournalAction(action);
+        setJournalState("saved");
+      } catch {
+        setJournalError("Could not reach the journal service.");
+        setJournalState("error");
+      }
+    },
+    [symbol, timeframe],
+  );
 
   useEffect(() => {
     void load();
@@ -98,8 +131,12 @@ export function DecisionCenter({
         ) : !ticket ? null : isTradeTicket(ticket) ? (
           <TicketCard
             ticket={ticket}
-            journaled={journaled}
-            onJournal={() => setJournaled(true)}
+            journalState={journalState}
+            journalAction={journalAction}
+            journalError={journalError}
+            onJournal={(action) => void journal(action)}
+            onChoose={() => setJournalState("choosing")}
+            onCancel={() => setJournalState("idle")}
           />
         ) : (
           <NoTradeCard ticket={ticket} />
@@ -109,37 +146,114 @@ export function DecisionCenter({
   );
 }
 
+const REFUSAL_COPY: Record<
+  string,
+  { headline: string; hint?: string }
+> = {
+  engine_down: {
+    headline: "Engine unavailable",
+    hint: "Start the live worker. The dashboard is up, but no ticket can be issued without it.",
+  },
+  no_profile: {
+    headline: "No risk profile",
+    hint: "Complete onboarding so the app knows the budget it may size against.",
+  },
+  unknown_instrument: { headline: "Unknown instrument" },
+  not_in_universe: { headline: "Not in the universe" },
+  no_data: {
+    headline: "No price data yet",
+    hint: "The venue is connected but no bar has arrived yet. This is a normal startup state.",
+  },
+  feed_not_configured: {
+    headline: "Feed not connected",
+    hint: "Add this venue's credentials to the worker's .env and restart it.",
+  },
+  market_closed: {
+    headline: "Market closed",
+    hint: "The session is closed, so no fresh price is expected. The app will start measuring when it opens.",
+  },
+  quote_too_old: {
+    headline: "Data is stale",
+    hint: "The session is open but the quote is older than the safety window. Not acting on it.",
+  },
+  no_champion: {
+    headline: "No promoted strategy",
+    hint: "A champion must pass the promotion gate. The gate is not lowered to fill the gap.",
+  },
+  no_signal: { headline: "Waiting" },
+  no_stop: {
+    headline: "No valid stop",
+    hint: "A setup without a stop is not a trade. It is refused.",
+  },
+  risk_blocked: {
+    headline: "Risk limit reached",
+    hint: "A position cap or the daily ticket limit refused the size.",
+  },
+  rr_below_floor: { headline: "Reward:risk too low" },
+};
+
 function NoTradeCard({ ticket }: { ticket: NonTicket }) {
+  const reasonCode = ticket.reason_code ?? "";
+  const copy = REFUSAL_COPY[reasonCode];
+
   const tone =
-    ticket.status === "engine_unavailable"
+    ticket.status === "engine_unavailable" ||
+    reasonCode === "feed_not_configured" ||
+    reasonCode === "quote_too_old"
       ? "border-degraded/40 bg-degraded/5"
-      : ticket.status === "stale"
-        ? "border-degraded/40 bg-degraded/5"
-        : "border-border bg-panel";
+      : "border-border bg-panel";
 
   const headline =
-    ticket.status === "engine_unavailable"
+    copy?.headline ??
+    (ticket.status === "engine_unavailable"
       ? "Engine unavailable"
       : ticket.status === "stale"
         ? "Data is stale"
         : ticket.status === "no_match"
           ? "No registered setup"
-          : "Waiting";
+          : "Waiting");
 
   return (
     <div className={`rounded-lg border p-4 ${tone}`}>
-      <div className="text-sm font-semibold mb-1">{headline}</div>
-      <p className="text-sm text-muted leading-relaxed">
-        {ticket.reason}
-      </p>
-      {"age_seconds" in ticket && ticket.age_seconds != null && (
-        <p className="text-xs text-muted mt-2">
-          Last heartbeat {Math.round(ticket.age_seconds)}s ago.
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <div className="text-sm font-semibold">{headline}</div>
+        {reasonCode && (
+          <span className="text-[10px] uppercase tracking-wider text-muted/70 tnum">
+            {reasonCode}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-muted leading-relaxed">{ticket.reason}</p>
+
+      {copy?.hint && (
+        <p className="text-xs text-muted/80 mt-2 leading-relaxed">{copy.hint}</p>
+      )}
+
+      {ticket.venue && (
+        <p className="text-[11px] text-muted mt-2">
+          Venue: <span className="text-foreground">{ticket.venue}</span>
         </p>
       )}
+
+      {ticket.status === "engine_unavailable" &&
+        ticket.engine?.age_seconds != null && (
+          <p className="text-xs text-muted mt-2">
+            Last heartbeat {Math.round(ticket.engine.age_seconds)}s ago.
+          </p>
+        )}
+
+      {ticket.status === "stale" && ticket.age_seconds != null && (
+        <p className="text-xs text-muted mt-2 tnum">
+          Price age {Math.round(ticket.age_seconds)}s
+          {ticket.data_as_of
+            ? ` · captured ${new Date(ticket.data_as_of).toISOString()}`
+            : ""}
+        </p>
+      )}
+
       <p className="text-[11px] text-muted/70 mt-3">
-        This is a normal state, not an error. The app does not offer a setup
-        it cannot measure.
+        This is a normal state, not an error. The app does not offer a setup it
+        cannot measure.
       </p>
     </div>
   );
@@ -147,12 +261,20 @@ function NoTradeCard({ ticket }: { ticket: NonTicket }) {
 
 function TicketCard({
   ticket,
-  journaled,
+  journalState,
+  journalAction,
+  journalError,
   onJournal,
+  onChoose,
+  onCancel,
 }: {
   ticket: TradeTicket;
-  journaled: boolean;
-  onJournal: () => void;
+  journalState: "idle" | "choosing" | "saving" | "saved" | "error";
+  journalAction: string | null;
+  journalError: string | null;
+  onJournal: (action: "took" | "skipped") => void;
+  onChoose: () => void;
+  onCancel: () => void;
 }) {
   const isBuy = ticket.side === "buy";
   const sideColor = isBuy ? "text-up" : "text-down";
@@ -265,21 +387,67 @@ function TicketCard({
       )}
 
       {/* The action */}
-      <div className="flex items-center gap-2">
-        <button
-          onClick={onJournal}
-          disabled={journaled}
-          className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-            journaled
-              ? "bg-panel-2 text-muted border border-border cursor-default"
-              : "bg-accent text-white hover:opacity-90"
-          }`}
-        >
-          {journaled ? "Journaled" : "Journal this ticket"}
-        </button>
-        <span className="text-[11px] text-muted">
-          The app advises. You decide.
-        </span>
+      <div className="space-y-2">
+        {journalState === "saved" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-4 py-2 rounded text-sm font-medium bg-panel-2 text-muted border border-border">
+              Journaled · {journalAction === "took" ? "took it" : "passed"}
+            </span>
+            <a
+              href="/journal"
+              className="text-xs text-accent hover:underline"
+            >
+              View journal
+            </a>
+          </div>
+        ) : journalState === "choosing" || journalState === "saving" ? (
+          <div className="rounded-lg border border-border bg-panel-2 p-3">
+            <p className="text-xs text-muted mb-2">
+              Record what you actually did. The app does not execute the trade.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => onJournal("took")}
+                disabled={journalState === "saving"}
+                className="px-3 py-1.5 rounded text-xs font-medium bg-accent text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {journalState === "saving" ? "saving…" : "I took it"}
+              </button>
+              <button
+                onClick={() => onJournal("skipped")}
+                disabled={journalState === "saving"}
+                className="px-3 py-1.5 rounded text-xs font-medium border border-border text-muted hover:text-foreground disabled:opacity-50"
+              >
+                I passed
+              </button>
+              <button
+                onClick={onCancel}
+                disabled={journalState === "saving"}
+                className="text-[11px] text-muted hover:text-foreground disabled:opacity-50"
+              >
+                cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onChoose}
+              className="px-4 py-2 rounded text-sm font-medium transition-colors bg-accent text-white hover:opacity-90"
+            >
+              Journal this ticket
+            </button>
+            <span className="text-[11px] text-muted">
+              The app advises. You decide.
+            </span>
+          </div>
+        )}
+
+        {journalState === "error" && (
+          <p className="text-xs text-down">
+            {journalError ?? "Could not journal this ticket."}
+          </p>
+        )}
       </div>
 
       <p className="text-[10px] text-muted/60 leading-relaxed">

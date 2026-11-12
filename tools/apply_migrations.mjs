@@ -15,58 +15,12 @@ import { PGlite } from "@electric-sql/pglite";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SHIM } from "./supabase_shim.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = join(ROOT, "supabase", "migrations");
 
 const db = new PGlite();
-
-/**
- * Supabase shim.
- *
- * A hosted Supabase project provides the `auth` schema, the `auth.users`
- * table, the `auth.uid()` function and the `anon` / `authenticated` /
- * `service_role` roles. PGlite is bare Postgres, so we build a faithful double
- * of exactly those objects. The migration files themselves remain plain
- * Supabase SQL and are NOT modified to accommodate the test.
- */
-const SHIM = `
-create schema if not exists auth;
-
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid(),
-  email text unique,
-  created_at timestamptz not null default now()
-);
-
--- Supabase's auth.uid(): the id of the currently authenticated user.
-create or replace function auth.uid() returns uuid
-  language sql stable as $$
-    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
-  $$;
-
-do $$
-begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then
-    create role anon nologin noinherit;
-  end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-    create role authenticated nologin noinherit;
-  end if;
-  if not exists (select 1 from pg_roles where rolname = 'service_role') then
-    create role service_role nologin noinherit bypassrls;
-  end if;
-end $$;
-
-grant usage on schema public, auth to anon, authenticated, service_role;
-grant select on auth.users to authenticated, service_role;
-
--- Supabase grants table privileges to the API roles by default; RLS filters
--- rows rather than the absence of a GRANT.
-alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
-alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
-`;
 
 console.log("Applying Supabase shim...");
 await db.exec(SHIM);
@@ -167,13 +121,42 @@ const checks = [
     expect: 0,
   },
   {
-    name: "no app function is executable by PUBLIC",
+    // The original version of this check looked for the string 'public=' in
+    // proacl. Postgres renders the PUBLIC grant as '=X/grantor', so that
+    // regex never matched anything and the check passed no matter what. It
+    // also never looked at `anon`, which is the role that actually mattered.
+    // has_function_privilege asks the database the real question.
+    name: "no app function is executable by anon or PUBLIC",
     sql: `select count(*)::int as bad from pg_proc p
           join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='public'
             and p.proname in ('get_ticket','promote_strategy','engine_status',
-                              'fire_alert','record_signal','claim_jobs','finish_job')
-            and coalesce(p.proacl::text,'') ~ '(^|,|\\{)public='`,
+                              'fire_alert','record_signal','claim_jobs','finish_job',
+                              'is_owner','is_owner_or_self',
+                              'caller_role','caller_is_privileged',
+                              'update_my_profile')
+            and (has_function_privilege('anon', p.oid, 'execute')
+                 or has_function_privilege('public', p.oid, 'execute'))`,
+    expect: 0,
+  },
+  {
+    name: "the worker-only functions are not executable by authenticated",
+    sql: `select count(*)::int as bad from pg_proc p
+          join pg_namespace n on n.oid=p.pronamespace
+          where n.nspname='public'
+            and p.proname in ('record_signal','claim_jobs','finish_job')
+            and has_function_privilege('authenticated', p.oid, 'execute')`,
+    expect: 0,
+  },
+  {
+    name: "every SECURITY DEFINER function pins its search_path",
+    sql: `select count(*)::int as bad from pg_proc p
+          join pg_namespace n on n.oid=p.pronamespace
+          where n.nspname='public'
+            and p.prosecdef
+            and (p.proconfig is null
+                 or not exists (select 1 from unnest(p.proconfig) c
+                                where c like 'search\_path=%'))`,
     expect: 0,
   },
   {

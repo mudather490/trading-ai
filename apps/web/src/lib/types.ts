@@ -82,9 +82,11 @@ export interface TradeTicket {
   status: "ticket";
   instrument: string;
   instrument_id: string;
+  venue: string;
   asset_class: string;
   timeframe: string;
   side: Side;
+  rule_id?: string;
   entry_price: number | null;
   entry_low: number | null;
   entry_high: number | null;
@@ -116,8 +118,15 @@ export interface TradeTicket {
 export interface NonTicket {
   status: Exclude<TicketStatus, "ticket">;
   reason: string;
+  /**
+   * Machine-readable refusal. Additive to `status`; the five status values are
+   * unchanged (I-8). This is what lets the UI say "the feed was never
+   * connected" instead of "stale".
+   */
+  reason_code?: string | null;
   engine?: EngineStatus;
   instrument?: string;
+  venue?: string;
   /** Present on a `stale` result: how old the price was. */
   age_seconds?: number | null;
   /** Present on a `stale` result: when the data was captured. */
@@ -138,8 +147,8 @@ export interface NonTicket {
 
 export type TicketResponse = TradeTicket | NonTicket;
 
-export function isTradeTicket(t: TicketResponse): t is TradeTicket {
-  return t.status === "ticket";
+export function isTradeTicket(t: TicketResponse | null): t is TradeTicket {
+  return t?.status === "ticket";
 }
 
 /** Format a number for display. Nulls become an em dash, never "null". */
@@ -172,3 +181,39 @@ export function fmtAge(seconds: number | null | undefined): string {
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
   return `${Math.round(seconds / 3600)}h ago`;
 }
+
+/* ------------------------------------------------------------------ feeds */
+
+export type VenueStatus =
+  | "live"
+  | "stale"
+  | "market_closed"
+  | "no_data"
+  | "down"
+  | "engine_down"
+  | "not_configured";
+
+export interface VenueHealth {
+  venue: string;
+  enabled: boolean;
+  configured: boolean;
+  connected: boolean;
+  status: VenueStatus;
+  hint: string | null;
+  symbols: number;
+  with_quotes: number;
+  data_quality: string;
+  last_tick_at: string | null;
+  age_seconds: number | null;
+  // The last provider contract check. null means nobody has checked this
+  // venue's response shape yet, which is NOT the same as a failed check.
+  contract_ok: boolean | null;
+  contract_checked_at: string | null;
+}
+
+export interface FeedHealth {
+  as_of: string;
+  engine: EngineStatus | null;
+  venues: VenueHealth[];
+}
+

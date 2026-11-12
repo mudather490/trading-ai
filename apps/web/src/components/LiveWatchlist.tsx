@@ -11,6 +11,32 @@ interface LiveState {
 }
 
 /**
+ * Postgres `numeric` arrives as a STRING over PostgREST (and from the local
+ * emulator). A price of "73492.0000000000" formatted with toLocaleString
+ * comes out as the whole string, which is how a watchlist ends up showing
+ * ten decimals of nothing. Everything numeric is coerced once, here.
+ */
+function normaliseQuote(row: Partial<Quote> | null | undefined): Quote | null {
+  if (!row || !row.instrument_id) return null;
+  const num = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    instrument_id: row.instrument_id,
+    bid: num(row.bid),
+    ask: num(row.ask),
+    last: num(row.last),
+    change_pct: num(row.change_pct),
+    volume: num(row.volume),
+    source: row.source ?? "realtime",
+    official: row.official ?? true,
+    as_of: row.as_of ?? new Date().toISOString(),
+  };
+}
+
+/**
  * The live watchlist.
  *
  * Subscribes to the `ticks` Realtime channel. The worker broadcasts ONE
@@ -33,7 +59,12 @@ export function LiveWatchlist({
   onSelect: (symbol: string) => void;
 }) {
   const [state, setState] = useState<LiveState>({
-    quotes: Object.fromEntries(initialQuotes.map((q) => [q.instrument_id, q])),
+    quotes: Object.fromEntries(
+      initialQuotes
+        .map((quote) => normaliseQuote(quote))
+        .filter((quote): quote is Quote => quote !== null)
+        .map((quote) => [quote.instrument_id, quote]),
+    ),
     connected: false,
     lastMessageAt: null,
   });
@@ -75,7 +106,7 @@ export function LiveWatchlist({
 
           for (const [instrumentId, q] of Object.entries(payload.quotes)) {
             const existing = next[instrumentId];
-            next[instrumentId] = {
+            const normalised = normaliseQuote({
               instrument_id: instrumentId,
               bid: existing?.bid ?? null,
               ask: existing?.ask ?? null,
@@ -85,7 +116,8 @@ export function LiveWatchlist({
               source: existing?.source ?? "realtime",
               official: existing?.official ?? true,
               as_of: q.as_of,
-            };
+            });
+            if (normalised) next[instrumentId] = normalised;
           }
 
           return { quotes: next, connected: true, lastMessageAt: Date.now() };
@@ -103,10 +135,11 @@ export function LiveWatchlist({
           // writes a quote directly (for example during a backfill), the
           // watchlist still updates.
           const row = payload.new as Quote;
-          if (!row?.instrument_id) return;
+          const normalised = normaliseQuote(row);
+          if (!normalised?.instrument_id) return;
           setState((prev) => ({
             ...prev,
-            quotes: { ...prev.quotes, [row.instrument_id]: row },
+            quotes: { ...prev.quotes, [normalised.instrument_id]: normalised },
           }));
         })
       .subscribe((status) => {

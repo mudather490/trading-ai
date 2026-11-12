@@ -5,11 +5,23 @@ the app is ticket-only, and broker write credentials do not exist yet.
 
 A connector's job is to turn a venue's stream into normalised events:
 
-    Trade(symbol, price, size, ts, side)
+    Trade(symbol, price, size, ts, side, venue, bid, ask)
 
 and to expose its own health so the heartbeat can report lag.
 """
 
-from .binance import BinanceStream, Trade, fetch_klines  # noqa: F401
+from .alpaca import AlpacaStream
+from .base import Stream, Trade, canonical_symbol, reconnect_delay
+from .binance import BinanceStream, fetch_klines
+from .oanda import OandaStream
 
-__all__ = ["BinanceStream", "Trade", "fetch_klines"]
+__all__ = [
+    "AlpacaStream",
+    "BinanceStream",
+    "OandaStream",
+    "Stream",
+    "Trade",
+    "canonical_symbol",
+    "fetch_klines",
+    "reconnect_delay",
+]

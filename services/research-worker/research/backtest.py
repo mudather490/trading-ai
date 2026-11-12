@@ -109,7 +109,13 @@ def compute_metrics(
         return {"error": "insufficient equity data"}
 
     values = list(equity)
-    returns = [values[i] / values[i - 1] - 1 for i in range(1, len(values))]
+    # A curve that touches zero would divide by zero here. A blown-up
+    # account is a result to REPORT, not an exception to raise.
+    returns = [
+        values[i] / values[i - 1] - 1
+        for i in range(1, len(values))
+        if values[i - 1]
+    ]
 
     # Drawdown on the mark-to-market curve.
     peak = values[0]
@@ -218,7 +224,8 @@ class Backtester:
         timeframe: str = "1d",
         cost_model: CostModel | None = None,
         initial_equity: float = 1.0,
-        risk_per_trade: float = 1.0,
+        risk_per_trade: float = 0.01,
+        max_leverage: float = 1.0,
         label: str = "backtest",
         n_trials: int = 1,
     ) -> None:
@@ -226,8 +233,22 @@ class Backtester:
         self.timeframe = timeframe
         self.cost_model = cost_model or CostModel()
         self.initial_equity = initial_equity
-        # Fraction of equity risked per trade (1.0 = all-in, 0.02 = 2%).
+        # Fraction of equity risked per trade (0.01 = 1%).
+        #
+        # This used to default to 1.0, which means "risk the whole account on
+        # every trade". A caller that forgot to override it got a strategy
+        # with no downside control at all, and the numbers looked plausible
+        # because a curve that goes to zero still has a Sharpe.
         self.risk_per_trade = risk_per_trade
+        # The cap on exposure, as a multiple of equity.
+        #
+        # `risk_per_trade / stop_distance` is the textbook position size, and
+        # it is only safe while the stop is not tiny. A Donchian stop that
+        # sits 0.5% from entry implies 4x equity of notional at 2% risk, and
+        # a 25% adverse move wipes the account. Without this cap the
+        # backtester reported -1716% drawdowns and +2670% CAGR, which are not
+        # results, they are arithmetic accidents.
+        self.max_leverage = max_leverage
         self.label = label
         self.n_trials = n_trials
 
@@ -247,7 +268,10 @@ class Backtester:
         """
         equity = self.initial_equity
         curve: list[float] = [equity]
-        timestamps: list[datetime] = []
+        # The curve has one point per bar PLUS the starting point, so the
+        # timestamps must have one per bar plus the first bar's time. They
+        # were off by one before, which shifted the whole period by a bar.
+        timestamps: list[datetime] = [self.bars[0].ts] if self.bars else []
         trades: list[Trade] = []
 
         position = Position(side="flat", entry_price=0.0, size=0.0)
@@ -255,20 +279,45 @@ class Backtester:
         entry_price = 0.0
         entry_index = 0
         entry_cost = 0.0
+        # The P&L already folded into the equity for the open position. The
+        # mark-to-market below adds only the CHANGE since the last mark, or
+        # the same P&L is counted once per bar and the equity explodes.
+        marked_pnl = 0.0
+        # Exposure bookkeeping, so a run can prove what it did.
+        max_exposure = 0.0
+        largest_positions: list[dict[str, Any]] = []
+        # A run that loses the whole account is a FAILURE, not a result.
+        # It stops trading and says so, instead of reporting a Sharpe
+        # computed on a curve that went to zero.
+        bankrupt = False
+        bankrupt_at: str | None = None
 
         bars = self.bars
         for i in range(len(bars)):
             bar = bars[i]
             timestamps.append(bar.ts)
 
+            if bankrupt:
+                # The account is gone. Nothing more is traded, and the curve
+                # stays flat at the level it died at.
+                curve.append(equity)
+                continue
+
             # ---- mark to market first: open positions count against us ----
             if position.side != "flat" and position.size:
+                # P&L in CURRENCY: price change x units. This used to be
+                # (price change / entry) x units, which mixes a relative
+                # return with a unit count and understates every P&L by a
+                # factor of the price. On a 70,000-dollar asset that is a
+                # 70,000x error, and it silently turned every research
+                # metric (Sharpe, CAGR, drawdown) into noise.
                 unrealised = (
-                    (bar.close - entry_price) / entry_price
+                    (bar.close - entry_price)
                     * position.size
                     * (1 if position.side == "buy" else -1)
                 )
-                equity += unrealised
+                equity += unrealised - marked_pnl
+                marked_pnl = unrealised
 
             signal = signal_fn(bars[: i + 1], i)
 
@@ -309,6 +358,7 @@ class Backtester:
                     )
                     position = Position(side="flat", entry_price=0.0, size=0.0)
                     entry_equity = equity
+                    marked_pnl = 0.0
 
             # ---- entry handling ----
             if (
@@ -323,6 +373,10 @@ class Backtester:
                         # Size so the stop costs risk_per_trade of equity.
                         size = (equity * self.risk_per_trade) / stop_distance
                         size = max(0.0, size)
+                        # ...but never more notional than the leverage cap.
+                        if bar.close > 0:
+                            max_size = (equity * self.max_leverage) / bar.close
+                            size = min(size, max_size)
                         if size > 0:
                             entry_price = bar.close
                             entry_index = i
@@ -330,6 +384,22 @@ class Backtester:
                                 bar.close * size * self.cost_model.round_trip() / 2
                             )
                             equity -= entry_cost
+                            notional = bar.close * size
+                            exposure = notional / equity if equity > 0 else 0.0
+                            max_exposure = max(max_exposure, exposure)
+                            largest_positions.append(
+                                {
+                                    "ts": bar.ts.isoformat(),
+                                    "side": signal.side,
+                                    "price": bar.close,
+                                    "size": size,
+                                    "notional": notional,
+                                    "exposure": exposure,
+                                    "stop_distance_pct": (
+                                        stop_distance / bar.close if bar.close else 0.0
+                                    ),
+                                }
+                            )
                             position = Position(
                                 side=signal.side,
                                 entry_price=bar.close,
@@ -337,8 +407,16 @@ class Backtester:
                                 opened_at=bar.ts,
                             )
                             entry_equity = equity
+                            marked_pnl = 0.0
 
             curve.append(equity)
+
+            if equity <= 0:
+                # The account is gone. Stop trading and record it.
+                bankrupt = True
+                bankrupt_at = bar.ts.isoformat()
+                position = Position(side="flat", entry_price=0.0, size=0.0)
+                marked_pnl = 0.0
 
         # Close any open position at the last bar, so the curve ends flat.
         if position.side != "flat" and position.size and self.bars:
@@ -348,6 +426,14 @@ class Backtester:
                 * (1 if position.side == "buy" else -1)
             )
             net = gross - self.cost_model.round_trip()
+            # The exit costs are real costs. They were charged on every
+            # ordinary exit but NOT on the forced close at the end of the
+            # data, so the last trade of every backtest was quietly cheaper
+            # than it should have been.
+            exit_cost = last.close * position.size * self.cost_model.round_trip() / 2
+            equity -= exit_cost
+            if curve:
+                curve[-1] = equity
             trades.append(
                 Trade(
                     entry_ts=bars[entry_index].ts,
@@ -358,7 +444,7 @@ class Backtester:
                     size=position.size,
                     gross_return=gross,
                     net_return=net,
-                    costs=entry_cost,
+                    costs=entry_cost + exit_cost,
                     reason="end_of_data",
                 )
             )
@@ -368,6 +454,16 @@ class Backtester:
         )
         metrics["initial_equity"] = self.initial_equity
         metrics["final_equity"] = curve[-1] if curve else equity
+        metrics["risk_per_trade"] = self.risk_per_trade
+        metrics["max_leverage"] = self.max_leverage
+        metrics["max_exposure_used"] = max_exposure
+        metrics["bankrupt"] = bankrupt
+        metrics["bankrupt_at"] = bankrupt_at
+        # The five biggest positions, so a reader can see where the money
+        # went without rerunning the backtest.
+        metrics["largest_positions"] = sorted(
+            largest_positions, key=lambda row: row["notional"], reverse=True
+        )[:5]
         metrics["costs"] = {
             "commission": self.cost_model.commission,
             "spread_slippage": self.cost_model.spread_slippage,
