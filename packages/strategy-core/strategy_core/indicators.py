@@ -202,22 +202,51 @@ def donchian(
 ) -> tuple[list[float | None], list[float | None]]:
     """Donchian channels: (upper, lower).
 
-    Note that the upper band EXCLUDES the current bar. A channel that
-    includes the current bar can never be broken, because the close is by
-    definition inside it.
+    The channel EXCLUDES the current bar. A channel that includes the
+    current bar can never be broken, because the close is by definition
+    inside it.
+
+    O(n) using a monotonic deque. The obvious implementation -- calling
+    `highest()` on a growing prefix for every bar -- is O(n^2), and with the
+    Engine recomputing on every bar that turns a backtest into a hang.
     """
-    highs = highest([b.high for b in bars], period)
-    lows = lowest([b.low for b in bars], period)
-    upper: list[float | None] = [None] * len(bars)
-    lower: list[float | None] = [None] * len(bars)
-    for i in range(len(bars)):
-        if i == 0:
-            continue
-        # Shift by one: use the PRIOR `period` bars, not including this one.
-        window_high = highest([b.high for b in bars[:i]], period)
-        window_low = lowest([b.low for b in bars[:i]], period)
-        upper[i] = window_high[-1] if window_high else None
-        lower[i] = window_low[-1] if window_low else None
+    from collections import deque
+
+    n = len(bars)
+    upper: list[float | None] = [None] * n
+    lower: list[float | None] = [None] * n
+    if n < 2 or period < 1:
+        return upper, lower
+
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+
+    max_q: deque[int] = deque()
+    min_q: deque[int] = deque()
+
+    for i in range(n):
+        # Add bar i-1 to the window. We consider the PRIOR `period` bars.
+        j = i - 1
+        if j >= 0:
+            while max_q and highs[max_q[-1]] <= highs[j]:
+                max_q.pop()
+            max_q.append(j)
+            while min_q and lows[min_q[-1]] >= lows[j]:
+                min_q.pop()
+            min_q.append(j)
+
+            # Drop anything older than the window.
+            cutoff = j - period
+            while max_q and max_q[0] <= cutoff:
+                max_q.popleft()
+            while min_q and min_q[0] <= cutoff:
+                min_q.popleft()
+
+            # The window [i-period, i-1] is full once i >= period.
+            if i >= period:
+                upper[i] = highs[max_q[0]]
+                lower[i] = lows[min_q[0]]
+
     return upper, lower
 
 

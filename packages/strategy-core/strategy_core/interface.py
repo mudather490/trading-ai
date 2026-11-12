@@ -104,6 +104,11 @@ class Context:
     now: datetime
     # Derived series the engine computed, indexed to align with `bars`.
     indicators: Mapping[str, Sequence[float]] = field(default_factory=dict)
+    # Secondary series, keyed by symbol. A rotation strategy needs the
+    # defensive leg (QQQ and GLD); a pairs strategy needs its partner.
+    aux_bars: Mapping[str, Sequence[Bar]] = field(default_factory=dict)
+    # Auxiliary indicators, keyed by "<symbol>:<name>".
+    aux_indicators: Mapping[str, Sequence[float]] = field(default_factory=dict)
 
     def last_bar(self) -> Bar | None:
         return self.bars[-1] if self.bars else None
@@ -115,6 +120,28 @@ class Context:
 
     def indicator(self, name: str, index: int = -1) -> float | None:
         series = self.indicators.get(name)
+        if not series:
+            return None
+        try:
+            return series[index]
+        except IndexError:
+            return None
+
+    def aux_closes(self, symbol: str, n: int | None = None) -> list[float]:
+        """Closes of a secondary series, aligned to the END of the series.
+
+        Alignment is by POSITION FROM THE END, not by timestamp: the two
+        series may have different session calendars (QQQ trades 6.5h, GLD the
+        same, but FX trades 24h), and a timestamp join would silently drop
+        bars.
+        """
+        series = self.aux_bars.get(symbol)
+        if not series:
+            return []
+        return [b.close for b in (series[-n:] if n else series)]
+
+    def aux_indicator(self, symbol: str, name: str, index: int = -1) -> float | None:
+        series = self.aux_indicators.get(f"{symbol}:{name}")
         if not series:
             return None
         try:
