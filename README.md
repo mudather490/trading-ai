@@ -1,128 +1,137 @@
-# AI Trading Agent
+# Trading Command Center
 
-**A research-first, risk-bounded AI trading agent** — built by analysing seven trading-education sources, independently reproducing their testable claims against market data, and rejecting everything that did not survive.
+A live trading dashboard, strategy lab and news engine. **Vercel** for the
+interface, **Supabase** for the state, and a small **always-on worker** for the
+engine that touches the market.
 
-**Status:** Specification complete. Ready for Phase 1 build.
-**Date:** 2026-11-11
+The app advises. **It does not place orders.** The primary button is
+"Journal this ticket" — the human decides.
+
+> Not financial advice. Trading carries loss risk. No figure in this
+> repository is a return promise.
 
 ---
 
-## Why this project exists
+## What it does
 
-Seven YouTube courses were analysed in full (4 English AI-trading courses, 3 Arabic EA Trading playlists totalling 226 videos). Every headline claim that could be tested was **independently reproduced against market data**. The results:
-
-| Finding | Evidence |
+| | |
 |---|---|
-| A course's **headline drawdown figure understated real drawdown 6×** | Turtle 55/20: claimed 3.29%, actual mark-to-market **−18.91%** |
-| Exactly **one** headline across all seven sources reproduces | AI Pathways' QQQ/gold rotation: claimed 24.8%/yr, reproduced **+29.63% CAGR, Sharpe 1.69** |
-| The most-viewed course's directional calls are **worse than a naive baseline** | EA Trading: 72% hit rate vs **88%** for "just follow the tape" → **−16pp** |
-| The best *idea* in the new Arabic course is real but its *strategy* is not | "Confirmed level" rule: Sharpe 0.25 → **0.74** in-sample, → **−0.04** out-of-sample |
-| Two courses ship materially misleading numbers | Mind Math Money (drawdown metric), EA Trading (+$48,000 vs +$5,500 in the same video) |
-
-**The conclusion that shapes this build:** none of these sources puts the LLM in the right place. Some let it size positions in the hot path, some let it grade its own homework, and most teach entry rules with no stop, no size, and no cost model.
-
-> **This system inverts it: the LLM never touches the execution path.**
-> Not "prompted not to trade" — the order-placement and position-size parameters **do not exist** in the agent's tool schema.
+| **Live prices** | Crypto (Binance, full market), US equities (Alpaca IEX — *partial*), forex and metals (OANDA practice — *indicative*). Every row carries its data quality so a partial feed is never mistaken for the whole market. |
+| **Decision Center** | A complete trade ticket — entry, stop, targets, size, R:R, the measured history behind it, and an honest probability band. Or it says **WAIT / NO_MATCH / STALE / ENGINE_UNAVAILABLE**, and shows why. |
+| **Strategy lab** | Create, compare, version and promote strategies. The promotion gate is a **versioned predicate in SQL**: no conversation can promote a strategy. |
+| **News and catalysts** | A two-stage pipeline: deterministic entity and event typing (SEC 8-K item codes), then local FinBERT sentiment, then a model for the residue. News is a **risk flag, never a trigger**. |
+| **Buyers vs sellers** | Crypto order flow, funding and open interest; CFTC positioning for FX; delayed short interest and insider filings for equities — each labelled with its freshness. |
+| **Alerts** | Rules decide what fires. The model writes the wording. |
 
 ---
 
-## Documents
+## The one idea
 
-| Document | What it contains |
-|---|---|
-| **[`docs/MASTER_SPEC.md`](docs/MASTER_SPEC.md)** | **Start here.** Architecture, the 8 invariants, component specs, the autonomy ladder, the 7-phase build plan, risk register, success metrics, and 19 explicitly-rejected patterns with reasons. |
-| **[`docs/DASHBOARD_SPEC.md`](docs/DASHBOARD_SPEC.md)** | Complete dashboard spec: 9 panels, SQL schema, alert taxonomy (P0/P1/P2), exact metric definitions, stack, build order, and 8 rejected anti-patterns. |
-| **[`docs/SOURCE_ANALYSIS.md`](docs/SOURCE_ANALYSIS.md)** | Full teardown of all 7 sources with quotes, timestamps, empirical replications, and what we take vs. reject. |
-| **[`research/FINDINGS.md`](research/FINDINGS.md)** | The four reproduced traps with reproducible numbers. |
-| `research/*.py` | The verification scripts. Run them to reproduce every number. |
+Seven trading courses and 226 videos were analysed and their testable claims
+independently reproduced. The result is documented in
+[`docs/MASTER_SPEC.md`](docs/MASTER_SPEC.md).
 
----
+The finding that shaped this system:
 
-## The 8 Invariants
+* A Turtle 55/20 breakout claimed **3.29% max drawdown**. On a mark-to-market
+  equity curve it was **−18.91%**. The number was a measurement artefact.
+* A set of "market calls" scored **72%** against an **88%** naive baseline.
+  Being worse than doing nothing clever is a real outcome.
+* A support/resistance rule scored Sharpe **0.68–0.74** in-sample and
+  **−0.04 to 0.26** out of sample.
+* One rule — hold QQQ above its 200-day average, otherwise hold gold —
+  **reproduced**: +28.41% CAGR, Sharpe 1.77, −18.10% max drawdown.
 
-These are enforced in code the agent cannot write to. Each has a test.
-
-1. **Capability removal** — no order tool, no size parameter, no mode parameter in the agent's schema.
-2. **Separate decisioning from execution** — the executor is a non-LLM process with its own credentials and its own network policy.
-3. **Promotion gates in code** — Python assertions, not prompts. Failure = *"nothing happened"*, never *"something subtly different happened."*
-4. **One holdout, consumed once** — `N_trials` logged; Deflated Sharpe and PBO reported beside raw Sharpe.
-5. **Mark-to-market only** — closed-trade drawdown may be shown, never headlined.
-6. **Reconciliation is continuous** — broker ≡ internal ≡ expected, every cycle. Mismatch ⇒ freeze.
-7. **Risk limits can only subtract** — there is no code path that opens an unprotected position.
-8. **Self-revision may tighten, never promote** — it can never promote itself to autonomous mode or deactivate monitoring.
+So the architecture puts **AI in the sidecar, never in the chassis**. The
+model proposes, explains, extracts and ranks. Deterministic code measures,
+sizes, decides and refuses. And the AI is *scored*: when its ranking or its
+news extraction stops beating the deterministic baseline, it is automatically
+demoted to explanation-only.
 
 ---
 
-## Repository layout (target)
+## Architecture
+
+Four components. One source of truth. One custody boundary.
 
 ```
-trading-ai/
-├── README.md
-├── docs/
-│   ├── MASTER_SPEC.md          # architecture + build plan
-│   ├── DASHBOARD_SPEC.md       # UI requirements
-│   └── SOURCE_ANALYSIS.md      # evidence from all 7 sources
-├── research/                   # verification scripts + FINDINGS.md
-│   ├── FINDINGS.md
-│   ├── bt_turtle.py
-│   ├── bt_core_qqq_gld.py
-│   ├── ea_score_predictions.py
-│   ├── ea_sr_rule.py
-│   └── out_*.txt
-├── engine/                     # Phase 1 — reference backtest engine
-│   ├── data/                   # adapters, quality, point-in-time universe
-│   ├── engine/                 # simulator, fills, metrics
-│   └── research/               # protocol, multiplicity, robustness, reports
-├── strategies/                 # S1..S20 candidate specs
-├── risk/                       # deterministic limits (read-only to the agent)
-├── agent/                      # Hermes perimeter — 6 tools, no order tools
-├── broker/                     # executor (non-LLM) — owns credentials
-├── dashboard/                  # Next.js + SSE ops UI
-└── broker-executor/            # (Phase 2) separate process
+Vercel Hobby          the face: Next.js 16, Auth, Realtime, API routes
+Supabase Free          the memory: Postgres + RLS, Realtime, Storage
+GCP e2-micro           the engine: always-on, holds the venue credentials
+Your PC                the research engine: backtests, sweeps, the gate
 ```
 
----
+Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Build phases
+### The custody boundary
 
-| Phase | Deliverable | Gate |
+| | Vercel | Worker |
 |---|---|---|
-| **0** | Evidence base — 7 sources, 4 replications, specs | ✅ **complete** |
-| **1** | Reference engine + reference strategy S18 | Engine rejects a known-false strategy; S18 reproduces +28.4% CAGR / Sharpe 1.77 |
-| **2** | Deterministic risk + executor (no LLM) | Agent process provably cannot open a broker connection |
-| **3** | Agent perimeter + promotion gates | Agent asked to place a trade **cannot**; it proposes instead |
-| **4** | Dashboard v1 (read-only) | Kill-switch drill works from the UI; audit written |
-| **5** | Paper trading + reconciliation | Signal agreement ≥99% for ≥40 days; divergence report published |
-| **6** | Assisted live | Zero unauthorized orders |
-| **7** | Bounded autonomous *(conditional)* | Requires human re-approval. Never self-reachable |
+| Supabase anon key | ✅ | ✅ |
+| Supabase service role key | ❌ | ✅ |
+| Venue credentials | ❌ | ✅ |
+| Can place an order | ❌ *(no code exists)* | ❌ *(no code exists)* |
+
+The web tier cannot trade because it has nothing to trade with.
 
 ---
 
-## Environment notes
+## Getting started
 
-- **Hermes Agent is already installed** at `%LOCALAPPDATA%\hermes\hermes-agent` — Nous Research's self-improving agent, with cron, a Telegram gateway, and a `finance` skill bundle (polymarket, stocks_client, sec-filings). This is the runtime for Phase 3. It is also the **safer** of the two agent runtimes the source courses push (no 360k-star plugin ecosystem, no ClawHub supply-chain surface).
-- **Node v22.23.1**, **Python 3.13** with pandas 3.0.5 / numpy 2.4.3, **ffmpeg 8.1.2**, `gh` CLI, `mcporter` (Exa search), `yt-dlp` (installed for this analysis).
-- No `agent-reach` CLI on PATH; `yt-dlp` was installed via pip to satisfy it.
+Full step-by-step instructions, including the parts that need your accounts:
+**[`docs/SETUP.md`](docs/SETUP.md)**.
+
+```bash
+npm install
+npm test          # migrations, RLS, worker, research
+```
+
+`npm test` runs everything:
+
+| Suite | Proves |
+|---|---|
+| `npm run db:check` | 6 migrations apply to real Postgres; 12 structural invariants hold |
+| `npm run db:test` | 27 RLS tests: anon sees nothing, a trusted user cannot read the owner's journal, only the owner can promote |
+| `npm run worker:test` | 53 tests: bars close exactly once, signal keys are stable, the worker refuses forbidden writes, the AI sidecar grounds its numbers |
+| `npm run research:test` | The engine reproduces the verified S18 result and agrees with an independent implementation |
 
 ---
 
-## Before Phase 2 begins, answer these
+## Layout
 
-1. **Capital and jurisdiction** → determines venue (regulated broker vs crypto exchange) and whether crypto perps are in scope.
-2. **Target market and timeframe** → S18 is daily-scale; the Arabic scalping content is 15-minute-scale and needs a different cost model.
-3. **Live trading at all?** → recommendation: Phases 1–6 only.
-4. **Which reference strategy first?** → S18 (verified) or S1 (most novel)?
-5. **Dashboard hosting** → recommendation: local/VPS with IP lock, never public.
-6. **Single-user or multi-tenant?** → materially changes auth and audit design.
+```
+apps/web/                     Next.js 16 — the Command Center
+services/live-worker/         the live engine (runs on the GCP VM)
+services/research-worker/     the research engine (runs on your PC)
+packages/strategy-core/       shared by both engines
+packages/vendor/              third-party code, with ATTRIBUTION.md
+supabase/migrations/          the schema
+supabase/tests/               the custody boundary
+tools/                        apply_migrations · backup · lint_sql
+docs/                         MASTER_SPEC · ARCHITECTURE · SETUP · DASHBOARD_SPEC
+research/                     the original source analysis
+```
 
 ---
 
-## A note on scope
+## Cost
 
-This is engineering, not financial advice. Trading carries loss risk; no claim in this repository is a return promise. The seven source courses make many such promises, and the empirical work here exists partly to demonstrate how few of them survive contact with data.
+**$0–10/month.** Vercel Hobby, Supabase Free, a free GCP e2-micro, and
+public market data. The AI runs on free tiers with a local FinBERT for the
+bulk of the work; the free tiers only ever receive **public market news**.
 
-The most useful thing we took from all of them is one sentence from the 142-minute masterclass, and it is not about trading:
+---
 
-> *"You must have something that says 'stop'… otherwise don't step outside your rules."* — [26:08]
+## Status
 
-That single sentence — the only risk rule in 142 minutes — is exactly what all seven sources under-deliver, and exactly what this system is built around.
+**Phase 0 complete.** Phases 1–5 are specified in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §7.
+
+| Phase | Scope | Status |
+|---|---|---|
+| 0 | Schema, RLS, gate functions, worker, web app, AI sidecar, ops | ✅ |
+| 1 | Alpaca + OANDA connectors, 12 symbols, retention, local FinBERT | ⬜ |
+| 2 | Signal engine, Decision Center, odds band, journal, alerts, chat | ⬜ |
+| 3 | Backtester, promotion gate, AI Feature Gate, AI Ranking Score | ⬜ |
+| 4 | News pipeline, event studies, catalyst cards, positioning, PWA | ⬜ |
+| 5 | Paper execution (only if you choose it later) | ⬜ |

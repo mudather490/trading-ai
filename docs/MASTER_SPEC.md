@@ -1,7 +1,19 @@
 # AI Trading Agent — Master Development Specification
 
+> **Note on version.** This document (v1.0) remains the authoritative record
+> of the **source research** and the **eight original invariants**. Its
+> *deployment topology* described a single-machine agent and has been
+> **superseded** by the three-tier design in
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) (v1.1), for the reasons set out
+> there. The invariant mapping from v1.0 to v1.1 is in
+> `ARCHITECTURE.md` §0.
+>
+> Nothing in the research findings below changed. The reproduction table, the
+> drawdown artefact, the naive-baseline result, and the S18 verification are
+> all still exactly as measured.
+
 **Status:** Ready for build
-**Version:** 1.0
+**Version:** 1.0 (research record; topology superseded — see above)
 **Date:** 2026-11-11
 **Workspace:** `E:\trading-ai`
 **Derived from:** 7 YouTube sources (4 English AI-trading courses + 3 Arabic EA Trading playlists) + independent empirical verification + published 2026 deployment literature.
